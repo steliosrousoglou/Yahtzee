@@ -616,11 +616,12 @@ def evaluate_strategy(n, choose_dice, choose_category, log=null_log):
 def main():
     strat = nn.NNStrategy()
     run = 0
-    for i in range(1000):
+    n=1000
+    for i in range(n):
         mean = evaluate_strategy(1, strat.choose_dice, strat.choose_category, stdout_log)
         run += mean
         #print(mean)
-    print("Mean: " + str(run/1000))
+    print("Mean: " + str(run/n))
 
 '''
 # for training data generation
