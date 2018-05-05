@@ -175,8 +175,8 @@ def encode_input(scoresheet, roll, rerolls, x_all):
         up_list[index] = 1
 
     # encode reroll
-    reroll_list = [int(x) for x in bin(int(rerolls))[2:]]
-    complete_bin(2, reroll_list)
+    reroll_list = [0] * 3
+    reroll_list[2 - int(rerolls)] = 1
 
     # encode categories
     enc = convert_categories(scoresheet)
@@ -204,13 +204,6 @@ def train():
         a=convert_reroll_to_labels(row[0], row[3])
         y_all.append(a)
 
-        #c+=1
-        #if c==1000:
-            #print(row)
-            #print(x_all[c-1])
-            #print(y_all[c-1])
-            #break
-
     features = len(x_all[0])
     norm_low = 0.0
     norm_high = 1.0
@@ -221,16 +214,11 @@ def train():
         mins[i] = min([x[i] for x in x_all])
         maxes[i] = max([x[i] for x in x_all])
 
-    x_norm = [[(x[i] - mins[i]) / (maxes[i] - mins[i]) * (norm_high - norm_low) + norm_low for i in range(0, features)] for x in x_all]
-    # split into training data and test data
-    test_size = int(len(x_norm) / 5)
-    train_size = len(x_norm) - test_size
+    x_norm = x_all
+    train_size = len(x_norm)
 
-    x_train = np.matrix(x_norm[:train_size])
-    y_train = np.matrix(y_all[:train_size])
-
-    x_test = np.matrix(x_norm[train_size:])
-    y_test = np.matrix(y_all[train_size:])
+    x_train = np.matrix(x_norm)
+    y_train = np.matrix(y_all)
 
     # set the topology of the neural network
     model = Sequential()
@@ -239,23 +227,11 @@ def train():
     model.add(Dense(y_train.shape[1], activation = "softmax"))
 
     # set up optimizer
-    sgd = SGD(lr=0.1, decay=1e-6, momentum=0.8, nesterov=True)
+    sgd = SGD(lr=0.05, decay=1e-6, momentum=0.8, nesterov=True)
     model.compile(loss="categorical_crossentropy", optimizer=sgd)
 
     # train!
-    model.fit(x_train, y_train, epochs=100, batch_size=100)
-
-    # get predictions (one-hot encoded row for each test input)
-    # convert to class 0, 1, 2 by finding index of maximum value;
-    y_predict = [max(enumerate(y), key=lambda x:x[1])[0] for y in model.predict(x_test)]
-
-    # do the same for test data
-    y_correct = [max(enumerate(y), key=lambda x:x[1])[0] for y in y_test]
-
-    # get list of (prediction, expectation) pairs, convert to list of
-    # 1's where equal, 0's where unequal, and sum result to get number
-    # of correct predictions
-    print(sum((1 if y[0] == y[1] else 0) for y in zip(y_predict, y_correct)) / len(y_predict))
+    model.fit(x_train, y_train, epochs=100, batch_size=50)
 
     return model
 
@@ -274,8 +250,6 @@ class NNStrategy:
 
         y = self.net.predict(np.matrix(input))
         label = np.argmax(y[0])
-        #print("Net output: ", y)
-        #TODO: fix THESE
 
         if label <= 5 and str(label+1) not in existing_categories:
             return roll.select_all([label + 1])

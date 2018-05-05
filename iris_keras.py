@@ -70,7 +70,7 @@ def main():
     model.compile(loss="categorical_crossentropy", optimizer=sgd)
 
     # train!
-    model.fit(x_train, y_train, epochs=100, batch_size=5)
+    model.fit(x_train, y_train, epochs=100, batch_size=50)
 
     # get predictions (one-hot encoded row for each test input)
     # convert to class 0, 1, 2 by finding index of maximum value;
