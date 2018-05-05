@@ -8,7 +8,7 @@ from keras.layers import Dense, Dropout
 from keras.optimizers import SGD
 
 # if trouble with CUDA on shared system then
-# export CUDA_VISIBLE_DEVICES=''
+# v
 # to turn CUDA off
 
 def main():

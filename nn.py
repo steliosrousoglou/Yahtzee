@@ -96,38 +96,139 @@ def convert_roll_to_categories(roll):
     norm_u.extend(norm_l)
     return norm_u
 
-def convert_reroll_to_labels(scoresheet, s):
+def are_same(seen_roll, returned_roll):
+    # return similarity score
+    if returned_roll.as_list() == []:
+        if seen_roll.as_list() == []:
+            return 1
+        return 0
+
+    #print(returned_roll.as_list(), seen_roll.as_list())
+    sim = 0.0
+    for i in range(6):
+        sim += min(seen_roll.count(i+1), returned_roll.count(i+1))
+    #print(sim / len(returned_roll.as_list()))
+    return sim / len(returned_roll.as_list())
+
+def select_n_kind(roll, existing_categories):
+    if '3K' in existing_categories \
+        and '4K' in existing_categories \
+        and ('Y' in existing_categories \
+        or 'Y+' not in existing_categories):
+        return yah.YahtzeeRoll.parse("")
+
+    max_val=0
+    max_am=0
+    for i in range(6):
+        if roll.count(i+1) > max_am:
+            max_am = roll.count(i+1)
+            max_val = i+1
+    return roll.select_all([max_val])
+
+def select_straight(roll, sheet):
+    if 'SS' not in sheet:
+        runs = roll.longest_runs()
+        if len(runs[0]) >= 3:
+            return roll.select_one(runs[0])
+        else:
+            # choose between possibly multiple runs of 2; keep the higher
+            # one if chance is open or it has strictly more open categories
+            counts = [sum([(0 if str(n) in sheet else 1) for n in x]) for x in runs]
+            run = runs[0]
+            if len(runs) > 1 and ('C' not in sheet or counts[1] > counts[0]):
+                run = runs[1]
+            return roll.select_one(run)
+    else:
+        # keep the straight that we have the most of
+        low = roll.select_one(range(1, 6))
+        high = roll.select_one(range(2, 7))
+
+        if len(low.as_list()) > len(high.as_list()):
+            return low
+        else:
+            return high
+
+def convert_reroll_to_labels(scoresheet, reroll, original_roll, rerolls):
     # if empty list returned
-    if s == '[]':
+    if reroll == '[]':
         return [0,0,0,0,0,0,0,0,0,0,1] # keep nothing
 
     # if category returned, put in right category
-    if s[0] != '[':
+    if reroll[0] != '[':
         r = [0] * 11
-        if s == '1' or s == '2' or s == '3' or s == '4' or s == '5' or s == '6':
-            r[int(s)-1] = 1
-        elif s == '3K' or s == '4K' or s == 'Y' or s == 'Y+':
+        if reroll == '1' or reroll == '2' or reroll == '3' or reroll == '4' or reroll == '5' or reroll == '6':
+            r[int(reroll)-1] = 1
+        elif reroll == '3K' or reroll == '4K' or reroll == 'Y' or reroll == 'Y+':
             r[6] = 1
-        elif s == 'SS' or s == 'LS':
+        elif reroll == 'SS' or reroll == 'LS':
             r[7] = 1
-        elif s == 'FH':
+        elif reroll == 'FH':
             r[8] = 1
-        elif s == 'C':
+        elif reroll == 'C':
             r[9] = 1
         else:
             r[10] = 1
         return r
 
     existing_categories = scoresheet.split(" ")
-    roll = yah.YahtzeeRoll.parse(s[1:-1])
+    roll = yah.YahtzeeRoll.parse(reroll[1:-1])
     numbers = diff_numbers(roll) # distinct numbers in roll
     r = [0] * 11
 
+    max_sim = 0
+    max_sim_cat = None
+    for i in range(6):
+        sim = are_same(roll, original_roll.select_all([i+1]))
+        if sim == 1:
+            r[i] = 1
+            return r
+        if sim > max_sim:
+            max_sim = sim
+            max_sim_cat = i
+
+    sim = are_same(roll, select_n_kind(original_roll, existing_categories))
+    if sim == 1:
+        r[6] = 1
+        return r
+    if sim > max_sim:
+        max_sim = sim
+        max_sim_cat = 6
+
+    sim = are_same(roll, select_straight(original_roll, existing_categories))
+    if sim == 1:
+        r[7] = 1
+        return r
+    if sim > max_sim:
+        max_sim = sim
+        max_sim_cat = 7
+
+    sim = are_same(roll, original_roll.select_for_full_house())
+    if sim == 1:
+        r[8] = 1
+        return r
+    if sim > max_sim:
+        max_sim = sim
+        max_sim_cat = 8
+
+    sim = are_same(roll, original_roll.select_for_chance(rerolls))
+    if sim == 1:
+        r[9] = 1
+        return r
+    if sim > max_sim:
+        max_sim = sim
+        max_sim_cat = 9
+    #print(reroll)
+    #print(max_sim)
+    #print(max_sim_cat)
+    r[max_sim_cat]=1
+    return r
+
+    '''
     # if keep them all, put in right category
-    if len(s) == 7:
+    if len(reroll) == 7:
         if numbers == 1:   # ns of a kind
-            if s[1] not in existing_categories:  # n is open
-                r[int(s[1])-1] = 1
+            if reroll[1] not in existing_categories:  # n is open
+                r[int(reroll[1])-1] = 1
             else:                       # n is closed
                 r[6] = 1
             return r
@@ -137,10 +238,9 @@ def convert_reroll_to_labels(scoresheet, s):
         if numbers == 2:                   # full house
             r[8] = 1
             return r
-    # shorter reroll
     elif numbers == 1:
         if s[1] not in existing_categories:  # n is open
-            r[int(s[1])-1] = 1
+            r[int(reroll[1])-1] = 1
         else:                               # n is closed
             r[6] = 1
         return r
@@ -153,6 +253,7 @@ def convert_reroll_to_labels(scoresheet, s):
     else:
         r[10] = 1
     return r
+    '''
 
 
 def encode_input(scoresheet, roll, rerolls, x_all):
@@ -191,15 +292,15 @@ def train():
     for row in reader:
         # row[0] scoresheet, row[1] roll, row[2] # rerolls, row[3] reroll
         encode_input(row[0], yah.YahtzeeRoll.parse(row[1]), row[2], x_all)
-        a=convert_reroll_to_labels(row[0], row[3])
+        a=convert_reroll_to_labels(row[0], row[3], yah.YahtzeeRoll.parse(row[1]), row[2])
         y_all.append(a)
 
         c+=1
-        #if c==10000:
+        if c==50000:
             #print(row)
             #print(x_all[c-1])
             #print(y_all[c-1])
-            #break
+            break
 
     features = len(x_all[0])
     norm_low = 0.0
@@ -233,7 +334,7 @@ def train():
     model.compile(loss="categorical_crossentropy", optimizer=sgd)
 
     # train!
-    model.fit(x_train, y_train, epochs=100, batch_size=100)
+    model.fit(x_train, y_train, epochs=100, batch_size=50)
 
     # get predictions (one-hot encoded row for each test input)
     # convert to class 0, 1, 2 by finding index of maximum value;
@@ -254,8 +355,8 @@ class NNStrategy:
 
     #def __init__(self, model):
         #self.net = model
-    def __init__(self):
-        self.net = train()
+    def __init__(self, model):
+        self.net = model
 
     '''
         inputs: a scoresheet, a roll, and # of rerolls
