@@ -9,6 +9,7 @@ from keras.layers import Dense, Dropout
 from keras.optimizers import SGD
 
 categories = ["1","2","3","4","5","6","3K","4K","FH","SS","LS","C","Y"]
+goals = [3, 6, 9, 12, 15, 18, 20, 10, 15, 20, 15, 25, 10]
 
 ''' Helper Functions '''
 def is_two_pair(roll):
@@ -62,7 +63,7 @@ def convert_categories(s):
     if "Y" in scoresheet:
         features.extend([1,0])
     elif "Y+" in scoresheet:
-        features.extend([1,1])
+        features.extend([0,1])
     else:
         features.extend([0,0])
 
@@ -78,22 +79,25 @@ def convert_roll_to_categories(roll):
         upper.append(roll.count(i+1))
     norm_u = [float(i)/max(upper) for i in upper]
 
-    if roll.is_straight(4):
-        lower.append(2)
-    elif roll.is_straight(3):
+    if roll.is_straight(5):
         lower.append(1)
+    elif roll.is_straight(4):
+        lower.append(0.75)
+    elif roll.is_straight(3):
+        lower.append(0.5)
+    elif roll.is_straight(2):
+        lower.append(0.25)
     else:
         lower.append(0)
 
     if roll.is_full_house():
-        lower.append(2)
-    elif is_two_pair(roll):
         lower.append(1)
+    elif is_two_pair(roll):
+        lower.append(0.75)
     else:
         lower.append(0)
-    norm_l = [float(i)/max(max(lower),1) for i in lower]
 
-    norm_u.extend(norm_l)
+    norm_u.extend(lower)
     return norm_u
 
 def convert_reroll_to_labels(scoresheet, s):
@@ -114,8 +118,6 @@ def convert_reroll_to_labels(scoresheet, s):
             r[8] = 1
         elif s == 'C':
             r[9] = 1
-        else:
-            r[10] = 1
         return r
 
     existing_categories = scoresheet.split(" ")
@@ -123,37 +125,45 @@ def convert_reroll_to_labels(scoresheet, s):
     numbers = diff_numbers(roll) # distinct numbers in roll
     r = [0] * 11
 
-    # if keep them all, put in right category
-    if len(s) == 7:
-        if numbers == 1:   # ns of a kind
-            if s[1] not in existing_categories:  # n is open
-                r[int(s[1])-1] = 1
-            else:                       # n is closed
-                r[6] = 1
-            return r
-        if roll.is_straight(4):         # straight
-            r[7] = 1
-            return r
-        if numbers == 2:                   # full house
-            r[8] = 1
-            return r
     # shorter reroll
-    elif numbers == 1:
+    if numbers == 1:
         if s[1] not in existing_categories:  # n is open
             r[int(s[1])-1] = 1
-        else:                               # n is closed
+        elif len(s) > 1 and '3K' not in existing_categories \
+            or '4K' not in existing_categories \
+            or 'Y' not in existing_categories \
+            or 'Y+' in existing_categories:                               # n is closed
             r[6] = 1
         return r
-    elif roll.is_straight(3) or is_three_non_adjacent(roll):
+    elif (roll.is_straight(3) or is_three_non_adjacent(roll)) and ('SS' not in existing_categories or 'LS' not in existing_categories):
         r[7] = 1
         return r
-    elif is_two_pair(roll) or numbers == 2:
+    elif (is_two_pair(roll) or (numbers == 2 and len(s) >= 3)) and 'FH' not in existing_categories:
         r[8] = 1
         return r
+    elif (('3K' not in existing_categories and roll.is_n_kind(2)) \
+        or ('4K' not in existing_categories and roll.is_n_kind(3)) \
+        or ('Y' not in existing_categories and roll.is_n_kind(4)) \
+        or ('Y+' in existing_categories and roll.is_n_kind(4))):
+        r[6] = 1
+        return r
+    elif 'C' not in existing_categories:
+        r[9] = 1            # TODO: UNSURE
+        return r             #r[10] = 1  should probably nenver happen
     else:
-        r[10] = 1
-    return r
+        max_val=0
+        max_am=0
+        for i in range(6):
+            if roll.count(i+1) >= max_am and str(i+1) not in existing_categories:
+                max_am = roll.count(i+1)
+                max_val = i+1
+        if max_val != 0:
+            r[int(max_val-1)] = 1
+            return r
 
+    if numbers >=2 and ('SS' not in existing_categories or 'LS' not in existing_categories):
+        r[7] = 1
+        return r
 
 def encode_input(scoresheet, roll, rerolls, x_all):
     # encode UPx
@@ -165,8 +175,8 @@ def encode_input(scoresheet, roll, rerolls, x_all):
         up_list[index] = 1
 
     # encode reroll
-    reroll_list = [int(x) for x in bin(int(rerolls))[2:]]
-    complete_bin(2, reroll_list)
+    reroll_list = [0] * 3
+    reroll_list[2 - int(rerolls)] = 1
 
     # encode categories
     enc = convert_categories(scoresheet)
@@ -194,13 +204,6 @@ def train():
         a=convert_reroll_to_labels(row[0], row[3])
         y_all.append(a)
 
-        c+=1
-        #if c==10000:
-            #print(row)
-            #print(x_all[c-1])
-            #print(y_all[c-1])
-            #break
-
     features = len(x_all[0])
     norm_low = 0.0
     norm_high = 1.0
@@ -211,16 +214,11 @@ def train():
         mins[i] = min([x[i] for x in x_all])
         maxes[i] = max([x[i] for x in x_all])
 
-    x_norm = [[(x[i] - mins[i]) / (maxes[i] - mins[i]) * (norm_high - norm_low) + norm_low for i in range(0, features)] for x in x_all]
-    # split into training data and test data
-    test_size = int(len(x_norm) / 5)
-    train_size = len(x_norm) - test_size
+    x_norm = x_all
+    train_size = len(x_norm)
 
-    x_train = np.matrix(x_norm[:train_size])
-    y_train = np.matrix(y_all[:train_size])
-
-    x_test = np.matrix(x_norm[train_size:])
-    y_test = y_all[train_size:]
+    x_train = np.matrix(x_norm)
+    y_train = np.matrix(y_all)
 
     # set the topology of the neural network
     model = Sequential()
@@ -229,38 +227,20 @@ def train():
     model.add(Dense(y_train.shape[1], activation = "softmax"))
 
     # set up optimizer
-    sgd = SGD(lr=0.1, decay=1e-6, momentum=0.8, nesterov=True)
+    sgd = SGD(lr=0.05, decay=1e-6, momentum=0.8, nesterov=True)
     model.compile(loss="categorical_crossentropy", optimizer=sgd)
 
     # train!
-    model.fit(x_train, y_train, epochs=100, batch_size=100)
-
-    # get predictions (one-hot encoded row for each test input)
-    # convert to class 0, 1, 2 by finding index of maximum value;
-    y_predict = [max(enumerate(y), key=lambda x:x[1])[0] for y in model.predict(x_test)]
-
-    # do the same for test data
-    y_correct = [max(enumerate(y), key=lambda x:x[1])[0] for y in y_test]
-
-    # get list of (prediction, expectation) pairs, convert to list of
-    # 1's where equal, 0's where unequal, and sum result to get number
-    # of correct predictions
-    print(sum((1 if y[0] == y[1] else 0) for y in zip(y_predict, y_correct)) / len(y_predict))
+    model.fit(x_train, y_train, epochs=100, batch_size=50)
 
     return model
 
 class NNStrategy:
     ''' takes the object returned from train as its parameter '''
 
-    #def __init__(self, model):
-        #self.net = model
-    def __init__(self):
-        self.net = train()
+    def __init__(self, model):
+        self.net = model
 
-    '''
-        inputs: a scoresheet, a roll, and # of rerolls
-        returns: a subroll of the roll
-    '''
     def choose_dice(self, sheet, roll, rerolls):
 
         x = []
@@ -270,15 +250,13 @@ class NNStrategy:
 
         y = self.net.predict(np.matrix(input))
         label = np.argmax(y[0])
-        #print("Net output: ", y)
-        #TODO: fix THESE
 
-        if label <= 5:
+        if label <= 5 and str(label+1) not in existing_categories:
             return roll.select_all([label + 1])
-        elif label == 6 and (('3K' not in existing_categories and roll.is_n_kind(3)) \
-            or ('4K' not in existing_categories and roll.is_n_kind(4)) \
-            or ('Y' not in existing_categories and roll.is_n_kind(5)) \
-            or ('Y+' in existing_categories and roll.is_n_kind(5))):
+        elif label == 6 and (('3K' not in existing_categories and roll.is_n_kind(2)) \
+            or ('4K' not in existing_categories and roll.is_n_kind(3)) \
+            or ('Y' not in existing_categories and roll.is_n_kind(4)) \
+            or ('Y+' in existing_categories and roll.is_n_kind(4))):
                 return roll.select_for_n_kind(sheet, rerolls)
         elif label == 7 and ('SS' not in existing_categories or 'LS' not in existing_categories):
             return roll.select_for_straight(sheet)
@@ -288,25 +266,11 @@ class NNStrategy:
             return yah.YahtzeeRoll.parse("")
         elif rerolls == 1:
             return roll.select_for_chance(rerolls)
-##new
-        '''
-        if '3K' not in existing_categories and roll.is_n_kind(2) \
-        or '4K' not in existing_categories and roll.is_n_kind(3) \
-        or 'Y' not in existing_categories and roll.is_n_kind(4):
-            for i in range(6,0,-1):
-                if roll.count(i) > 3:
-                    return roll.select_all([i])
-            for i in range(6,0,-1):
-                if roll.count(i) > 2:
-                    return roll.select_all([i])
-            for i in range(6,0,-1):
-                if roll.count(i) > 1:
-                    return roll.select_all([i])
-        '''
-##endnenw
+
         for i in range(6,0,-1):
             if roll.count(i) > 1 and str(i) not in existing_categories:
                 return roll.select_all([i])
+
         return yah.YahtzeeRoll.parse("")
 
     '''
@@ -322,19 +286,20 @@ class NNStrategy:
         input = encode_input(scoresheet, roll, 0, x)
         y = self.net.predict(np.matrix(input))
         label = np.argmax(y[0])
-        #print("Net output: ", y)
-
-        #TODO: fix THESE
 
         if label <= 6:
             if roll.is_n_kind(5) and 'Y' not in existing_categories and 'Y+' not in existing_categories:
 
                 return categories.index('Y')
             elif roll.is_n_kind(5) and 'Y+' in existing_categories:
-                for i in range(11, -1, -1): # in bonuns Yahtzee, return some other category, but not Y
+                min_val = 50
+                min_cat = None
+                for i in range(11, -1, -1):
                     if categories[i] not in existing_categories:
-
-                        return categories.index(categories[i])
+                        if goals[i] < min_val:
+                            min_val = goals[i]
+                            min_cat = categories[i]
+                return categories.index(min_cat)
             elif roll.is_n_kind(4) and '4K' not in existing_categories:
 
                 return categories.index('4K')
@@ -362,18 +327,17 @@ class NNStrategy:
             return categories.index('C')
 
         # At this point, we have failed to score full points in any category
-        # => score a 0 in hard to achieve categories
+        # Return category with min goal value (minimum expected payoff)
+        #TODO: Use Goal Scores HERE
 
-        for i in range(6, 0, -1):
-            if roll.count(i) >= 2 and str(i) not in existing_categories:
-                return categories.index(str(i))
+        min_val = 50
+        min_cat = None
 
-        for i in range(11, -1, -1):
-            #print(scoresheet)
+        for i in range(12, -1, -1):
             if categories[i] not in existing_categories:
-                #print('k')
-                #print('I AM RETURNING '+ categories[i] + ' num '+str(categories.index(categories[i])))
-                return categories.index(categories[i])
-        if 'Y' not in existing_categories and 'Y+' not in existing_categories:
-            #print('j')
-            return categories.index('Y')
+                if i == 12 and 'Y+' in existing_categories:
+                    continue
+                if goals[i] < min_val:
+                    min_val = goals[i]
+                    min_cat = categories[i]
+        return categories.index(min_cat)
